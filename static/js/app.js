@@ -1,406 +1,276 @@
-const socket = io();
-const appState = {
-  peerId: null,
-  name: `Utilisateur-${Math.floor(Math.random() * 1000)}`,
-  selectedMode: 'auto',
-  peers: new Map(),
-  rtcConnections: new Map(),
-  dataChannels: new Map(),
-  messageCount: 0,
-  pendingSignals: new Map(),
-};
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&family=DM+Mono:wght@400;600&display=swap');
 
-const CONFIG = {
-  iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }],
-};
-
-function updateModeUI() {
-  const modeButtons = document.querySelectorAll('[data-mode]');
-  modeButtons.forEach((button) => {
-    const isActive = button.dataset.mode === appState.selectedMode;
-    button.classList.toggle('active', isActive);
-    button.setAttribute('aria-pressed', String(isActive));
-  });
-
-  const modeStatus = document.getElementById('mode-status');
-  if (modeStatus) {
-    modeStatus.textContent = appState.selectedMode.toUpperCase();
-  }
+:root {
+    --primary: #d9f99d;
+    --primary-dark: #182014;
+    --bg-dark: #101411;
+    --bg-lighter: #151b17;
+    --bg-accent: #1d251f;
+    --border-color: #29312b;
+    --text-light: #eef4eb;
+    --text-muted: #829083;
+    --text-label: #6f7e70;
+    --accent-green: #96b965;
 }
 
-function evaluateBestMode(peerId) {
-  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  const effectiveType = connection ? connection.effectiveType : '4g';
-  const slowNetwork = ['slow-2g', '2g'].includes(effectiveType);
-  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-
-  if (appState.selectedMode === 'direct') return 'direct';
-  if (appState.selectedMode === 'relay') return 'relay';
-
-  const shouldPreferDirect = !slowNetwork || isLocal;
-  if (peerId && shouldPreferDirect) {
-    return 'direct';
-  }
-
-  return 'relay';
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+    font-family: 'Manrope', sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text-light);
+    overflow: hidden;
 }
 
-function setConnectionStatus(status, type = 'connecting') {
-  const badge = document.getElementById('chat-status');
-  const text = document.getElementById('connection-status');
-  const dot = badge.querySelector('.status-dot');
+.font-mono { font-family: 'DM Mono', monospace; }
 
-  badge.className = `status-badge ${type === 'connected' ? 'connected' : 'connecting'}`;
-  badge.innerHTML = `<span class="status-dot ${type === 'connected' ? 'active' : 'inactive'}"></span><span>${status}</span>`;
-  if (text) text.textContent = status;
-  if (dot) dot.className = `status-dot ${type === 'connected' ? 'active' : 'inactive'}`;
+.label {
+    color: var(--text-label);
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
 }
 
-function displayMessage(text, type, sender = 'Pair') {
-  const container = document.getElementById('messages-container');
-  if (container.children.length === 1 && container.children[0].textContent.includes('Aucun message')) {
-    container.innerHTML = '';
-  }
-
-  const messageEl = document.createElement('div');
-  messageEl.className = `flex gap-3 ${type === 'own' ? 'flex-row-reverse' : ''}`;
-
-  const avatarEl = document.createElement('div');
-  avatarEl.className = 'avatar shrink-0';
-  avatarEl.textContent = sender.slice(0, 1).toUpperCase();
-
-  const contentEl = document.createElement('div');
-  contentEl.className = type === 'own' ? 'items-end text-right' : '';
-
-  const senderEl = document.createElement('div');
-  senderEl.className = 'flex items-baseline gap-2 mb-1 text-xs';
-  const nameSpan = document.createElement('span');
-  nameSpan.className = 'font-semibold text-[var(--text-light)]';
-  nameSpan.textContent = type === 'own' ? 'Vous' : sender.slice(0, 8) + '...';
-  const timeSpan = document.createElement('span');
-  timeSpan.className = 'text-[10px] text-[var(--text-muted)]';
-  timeSpan.textContent = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  senderEl.append(nameSpan, timeSpan);
-
-  const bubbleEl = document.createElement('div');
-  bubbleEl.className = `message-bubble ${type === 'own' ? 'own' : 'peer'}`;
-  bubbleEl.textContent = text;
-
-  contentEl.append(senderEl, bubbleEl);
-  messageEl.append(avatarEl, contentEl);
-  container.appendChild(messageEl);
-  container.scrollTop = container.scrollHeight;
+.grain {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
 }
 
-function addSystemMessage(text) {
-  const container = document.getElementById('messages-container');
-  if (container.children.length === 1 && container.children[0].textContent.includes('Aucun message')) {
-    container.innerHTML = '';
-  }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(217, 249, 157, 0.2);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(217, 249, 157, 0.4); }
 
-  const messageEl = document.createElement('div');
-  messageEl.className = 'text-center py-2';
-  messageEl.innerHTML = `<p class="text-[10px] text-[var(--text-muted)]">${text}</p>`;
-  container.appendChild(messageEl);
-  container.scrollTop = container.scrollHeight;
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 8px rgba(217, 249, 157, 0.1); }
+    50% { box-shadow: 0 0 16px rgba(217, 249, 157, 0.3); }
 }
 
-function renderPeerList() {
-  const list = document.getElementById('peers-list');
-  if (!list) return;
-
-  const peers = Array.from(appState.peers.values());
-  if (!peers.length) {
-    list.innerHTML = '<p class="text-xs text-[var(--text-muted)]">Aucune connexion</p>';
-    return;
-  }
-
-  list.innerHTML = peers.map((peer) => `
-    <div class="flex items-center gap-2 p-2 rounded-lg bg-[var(--bg-lighter)] border border-[var(--border-color)]" id="peer-${peer.peerId}">
-      <div class="avatar text-xs">${peer.peerId.slice(0, 1).toUpperCase()}</div>
-      <div class="flex-1 min-w-0">
-        <p class="text-xs font-medium text-[var(--text-light)] truncate">${peer.name || peer.peerId.slice(0, 12)}...</p>
-        <p class="text-[10px] text-[var(--text-label)]">${peer.mode || 'Auto'}</p>
-      </div>
-      <span class="h-2 w-2 rounded-full bg-[var(--primary)]"></span>
-    </div>
-  `).join('');
+@keyframes flow-gradient {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
 }
 
-function updateNetworkInfo() {
-  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  const mode = evaluateBestMode();
-  const el = document.getElementById('connection-type');
-  if (el) el.textContent = mode.toUpperCase();
-
-  if (connection) {
-    document.getElementById('network-quality').textContent = connection.effectiveType || '4g';
-  } else {
-    document.getElementById('network-quality').textContent = 'N/A';
-  }
+.pulse-active { animation: pulse-glow 2s ease-in-out infinite; }
+.gradient-flow {
+    background: linear-gradient(90deg, #d9f99d, #96b965, #d9f99d);
+    background-size: 200% 200%;
+    animation: flow-gradient 3s ease-in-out infinite;
 }
 
-function createPeerConnection(peerId, isOfferer = true) {
-  if (appState.rtcConnections.has(peerId)) return appState.rtcConnections.get(peerId);
+.transition-smooth { transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
 
-  const pc = new RTCPeerConnection(CONFIG);
-  appState.rtcConnections.set(peerId, pc);
+.btn-primary, .btn-secondary, input[type="text"], input[type="password"], textarea {
+    font-family: inherit;
+}
 
-  const dc = pc.createDataChannel('chat');
-  appState.dataChannels.set(peerId, dc);
+.btn-primary {
+    background-color: var(--primary);
+    color: var(--primary-dark);
+    border: none;
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition-smooth;
+}
+.btn-primary:hover {
+    background-color: #efffc9;
+    box-shadow: 0 0 12px rgba(217, 249, 157, 0.2);
+}
 
-  dc.onopen = () => {
-    setConnectionStatus('Connecté', 'connected');
-    addSystemMessage(`Connexion directe établie avec ${peerId.slice(0, 8)}...`);
-    const current = appState.peers.get(peerId) || { peerId };
-    current.mode = 'direct';
-    appState.peers.set(peerId, current);
-    renderPeerList();
-  };
+.btn-secondary {
+    background: transparent;
+    color: var(--text-light);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition-smooth;
+}
+.btn-secondary:hover {
+    border-color: var(--accent-green);
+    color: var(--primary);
+}
 
-  dc.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data);
-      if (payload.type === 'message') {
-        displayMessage(payload.text, 'peer', payload.sender || peerId);
-      }
-    } catch (error) {
-      console.error('Erreur parsing message direct', error);
+input[type="text"], input[type="password"], textarea {
+    background-color: var(--bg-lighter);
+    color: var(--text-light);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    transition-smooth;
+}
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
+input:focus, textarea:focus { outline: none; border-color: var(--accent-green); }
+
+.card {
+    background-color: var(--bg-lighter);
+    border: 1px solid var(--border-color);
+    border-radius: 1.25rem;
+    padding: 1.25rem;
+}
+
+.message-bubble {
+    padding: 0.75rem 1rem;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    max-width: 85%;
+    word-wrap: break-word;
+}
+.message-bubble.own {
+    background-color: rgba(217, 249, 157, 0.15);
+    color: var(--text-light);
+    border: 1px solid rgba(217, 249, 157, 0.2);
+}
+.message-bubble.peer {
+    background-color: rgba(150, 185, 101, 0.15);
+    color: var(--text-light);
+    border: 1px solid rgba(150, 185, 101, 0.2);
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: 'DM Mono', monospace;
+}
+.status-badge.connected {
+    background-color: rgba(217, 249, 157, 0.1);
+    color: var(--primary);
+    border: 1px solid rgba(217, 249, 157, 0.2);
+}
+.status-badge.connecting {
+    background-color: rgba(217, 249, 157, 0.05);
+    color: var(--text-muted);
+    border: 1px solid rgba(217, 249, 157, 0.1);
+}
+.status-dot {
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 50%;
+    display: inline-block;
+}
+.status-dot.active {
+    background-color: var(--primary);
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+.status-dot.inactive { background-color: var(--text-muted); }
+
+.avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.75rem;
+    font-weight: 700;
+    font-size: 0.875rem;
+    background: linear-gradient(135deg, rgba(217, 249, 157, 0.2), rgba(150, 185, 101, 0.2));
+    border: 1px solid rgba(217, 249, 157, 0.3);
+}
+
+.mode-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid var(--border-color);
+    background: rgba(20, 26, 22, 0.8);
+    border-radius: 999px;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+
+.mode-pill.active {
+    border-color: rgba(217, 249, 157, 0.4);
+    color: var(--primary);
+}
+
+.composer-grid {
+    display: grid;
+    grid-template-columns: minmax(140px, 220px) minmax(0, 1fr) auto;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.composer-target,
+.composer-message,
+.send-btn {
+    min-height: 42px;
+}
+
+.composer-target,
+.composer-message {
+    background: rgba(21, 27, 23, 0.95);
+    color: var(--text-light);
+    border: 1px solid var(--border-color);
+    border-radius: 0.8rem;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.875rem;
+    outline: none;
+}
+
+.composer-target:focus,
+.composer-message:focus {
+    border-color: var(--accent-green);
+    box-shadow: 0 0 0 1px rgba(150, 185, 101, 0.2);
+}
+
+.send-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 0.8rem;
+    background: var(--primary);
+    color: var(--primary-dark);
+    padding: 0.6rem 0.9rem;
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.send-btn:hover {
+    background: #efffc9;
+}
+
+#peers-list .peer-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 0.5rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--border-color);
+    background: rgba(21, 27, 23, 0.85);
+}
+
+#peers-list .peer-score {
+    font-size: 0.62rem;
+    color: var(--text-label);
+    font-family: 'DM Mono', monospace;
+}
+
+@media (max-width: 640px) {
+    .composer-grid {
+        grid-template-columns: 1fr;
     }
-  };
-
-  pc.ondatachannel = (event) => {
-    const channel = event.channel;
-    appState.dataChannels.set(peerId, channel);
-    channel.onmessage = (evt) => {
-      try {
-        const payload = JSON.parse(evt.data);
-        if (payload.type === 'message') {
-          displayMessage(payload.text, 'peer', payload.sender || peerId);
-        }
-      } catch (error) {
-        console.error('Erreur parsing datachannel', error);
-      }
-    };
-    channel.onopen = () => {
-      setConnectionStatus('Connecté', 'connected');
-      addSystemMessage(`Connexion directe active avec ${peerId.slice(0, 8)}...`);
-    };
-  };
-
-  pc.onicecandidate = (event) => {
-    if (!event.candidate) return;
-    socket.emit('signal', {
-      from: appState.peerId,
-      target: peerId,
-      signal: { candidate: event.candidate },
-    });
-  };
-
-  pc.onconnectionstatechange = () => {
-    if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
-      appState.selectedMode = 'relay';
-      updateModeUI();
-      addSystemMessage('Direct a échoué. Passage automatique en mode relais.');
-    }
-  };
-
-  pc.onnegotiationneeded = async () => {
-    if (!isOfferer) return;
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit('signal', {
-        from: appState.peerId,
-        target: peerId,
-        signal: { offer },
-      });
-    } catch (error) {
-      console.error('Erreur creation offer', error);
-    }
-  };
-
-  return pc;
 }
-
-async function handleIncomingSignal(payload) {
-  const from = payload.from;
-  const signal = payload.signal;
-
-  if (!from || !signal) return;
-
-  let pc = appState.rtcConnections.get(from);
-  if (!pc) {
-    pc = createPeerConnection(from, false);
-  }
-
-  if (signal.offer) {
-    await pc.setRemoteDescription(new RTCSessionDescription(signal.offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit('signal', {
-      from: appState.peerId,
-      target: from,
-      signal: { answer },
-    });
-    return;
-  }
-
-  if (signal.answer) {
-    await pc.setRemoteDescription(new RTCSessionDescription(signal.answer));
-    return;
-  }
-
-  if (signal.candidate) {
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
-    } catch (error) {
-      console.error('Erreur ICE candidate', error);
-    }
-  }
-}
-
-function sendMessageViaRelay(targetPeerId, text) {
-  socket.emit('relay_message', {
-    from: appState.peerId,
-    to: targetPeerId,
-    message: text,
-    timestamp: Date.now(),
-  });
-}
-
-function sendMessageToPeer(peerId, text) {
-  const mode = evaluateBestMode(peerId);
-  const pc = appState.rtcConnections.get(peerId);
-  const channel = appState.dataChannels.get(peerId);
-
-  if (mode === 'direct' && pc && channel && channel.readyState === 'open') {
-    channel.send(JSON.stringify({ type: 'message', text, sender: appState.name }));
-    return true;
-  }
-
-  if (mode === 'direct' && !pc) {
-    const newPc = createPeerConnection(peerId, true);
-    const toSend = { type: 'message', text, sender: appState.name };
-    setTimeout(() => {
-      const ch = appState.dataChannels.get(peerId);
-      if (ch && ch.readyState === 'open') {
-        ch.send(JSON.stringify(toSend));
-      } else {
-        sendMessageViaRelay(peerId, text);
-      }
-    }, 600);
-    return true;
-  }
-
-  sendMessageViaRelay(peerId, text);
-  return false;
-}
-
-socket.on('connect', () => {
-  appState.peerId = `user-${Math.random().toString(36).slice(2, 8)}`;
-  appState.name = document.getElementById('my-name')?.textContent || appState.name;
-  socket.emit('register', { peerId: appState.peerId, name: appState.name });
-  document.getElementById('my-peer-id').textContent = appState.peerId;
-  document.getElementById('my-name').textContent = appState.name;
-  updateNetworkInfo();
-});
-
-socket.on('my-peer-id', ({ peerId, name }) => {
-  appState.peerId = peerId;
-  document.getElementById('my-peer-id').textContent = peerId;
-  document.getElementById('my-name').textContent = name || appState.name;
-  appState.name = name || appState.name;
-  setConnectionStatus('Prêt', 'connected');
-});
-
-socket.on('online-peers', (peers) => {
-  appState.peers.clear();
-  peers.forEach((peer) => {
-    appState.peers.set(peer.peerId, { ...peer, mode: evaluateBestMode(peer.peerId) });
-  });
-  renderPeerList();
-});
-
-socket.on('signal', (payload) => {
-  handleIncomingSignal(payload);
-});
-
-socket.on('relay_message', ({ from, message, timestamp }) => {
-  displayMessage(message, 'peer', from.slice(0, 8) || 'Relais');
-  addSystemMessage(`Message reçu via relais serveur`);
-});
-
-function bindUI() {
-  document.querySelectorAll('[data-mode]').forEach((button) => {
-    button.addEventListener('click', () => {
-      appState.selectedMode = button.dataset.mode;
-      updateModeUI();
-      addSystemMessage(`Mode sélectionné : ${appState.selectedMode.toUpperCase()}`);
-    });
-  });
-
-  document.getElementById('message-form').addEventListener('submit', (event) => {
-    event.preventDefault();
-    const input = document.getElementById('message-input');
-    const text = input.value.trim();
-    if (!text) return;
-
-    const recipient = document.getElementById('target-peer-id')?.value?.trim();
-    if (!recipient) {
-      addSystemMessage('Entrez un ID de pair avant d’envoyer un message.');
-      return;
-    }
-
-    displayMessage(text, 'own', appState.name);
-    const sentDirectly = sendMessageToPeer(recipient, text);
-    appState.messageCount += 1;
-    document.getElementById('message-count').textContent = String(appState.messageCount);
-
-    if (!sentDirectly) {
-      addSystemMessage(`Message relayé via serveur vers ${recipient.slice(0, 8)}...`);
-    }
-
-    input.value = '';
-  });
-
-  document.getElementById('btn-create-offer').addEventListener('click', () => {
-    const target = document.getElementById('target-peer-id').value.trim();
-    if (!target) {
-      addSystemMessage('Indiquez un peer cible pour lancer un appel direct.');
-      return;
-    }
-    const pc = createPeerConnection(target, true);
-    appState.peers.set(target, { peerId: target, name: target, mode: 'direct' });
-    renderPeerList();
-    setConnectionStatus('Connexion directe...', 'connecting');
-  });
-
-  document.getElementById('btn-answer-offer').addEventListener('click', () => {
-    const target = document.getElementById('target-peer-id').value.trim();
-    if (!target) {
-      addSystemMessage('Indiquez un peer cible pour répondre à une offre.');
-      return;
-    }
-    const pc = createPeerConnection(target, false);
-    appState.peers.set(target, { peerId: target, name: target, mode: 'direct' });
-    renderPeerList();
-  });
-
-  document.getElementById('target-peer-id').addEventListener('input', (event) => {
-    const target = event.target.value.trim();
-    if (!target) return;
-    const recommended = evaluateBestMode(target);
-    const label = document.getElementById('recommended-mode');
-    label.textContent = recommended === 'direct' ? 'Direct WebRTC recommandé' : 'Relais serveur recommandé';
-  });
-}
-
-window.addEventListener('load', () => {
-  updateModeUI();
-  bindUI();
-  setConnectionStatus('Prêt', 'connected');
-  updateNetworkInfo();
-  document.getElementById('my-name').textContent = appState.name;
-  document.getElementById('my-peer-id').textContent = '...' ;
-});
