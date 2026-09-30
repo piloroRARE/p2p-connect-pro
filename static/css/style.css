@@ -1,165 +1,200 @@
-<!DOCTYPE html>
-<html lang="fr" class="h-full">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>P2P Connect Pro</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
-</head>
-<body>
-    <div class="grain"></div>
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&family=DM+Mono:wght@400;600&display=swap');
 
-    <header class="border-b border-[var(--border-color)] bg-[var(--bg-dark)]/80 backdrop-blur shrink-0 z-30 h-16 flex items-center">
-        <div class="w-full px-4 sm:px-6 lg:px-8 flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--primary)] text-[var(--primary-dark)] shadow-[0_0_24px_rgba(217,249,157,0.14)]">
-                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="6" cy="6" r="3"></circle>
-                        <circle cx="18" cy="6" r="3"></circle>
-                        <circle cx="6" cy="18" r="3"></circle>
-                        <circle cx="18" cy="18" r="3"></circle>
-                        <line x1="9" y1="6" x2="15" y2="6"></line>
-                        <line x1="9" y1="18" x2="15" y2="18"></line>
-                        <line x1="6" y1="9" x2="6" y2="15"></line>
-                        <line x1="18" y1="9" x2="18" y2="15"></line>
-                    </svg>
-                </div>
-                <div>
-                    <p class="font-bold text-lg tracking-tight text-[var(--text-light)]">p2p<span class="text-[var(--primary)]">.</span>connect</p>
-                    <p class="text-[10px] uppercase tracking-[0.22em] text-[var(--text-label)]">décentralisé · sans serveur</p>
-                </div>
-            </div>
-            <div class="hidden items-center gap-5 text-xs text-[var(--text-muted)] sm:flex">
-                <span class="flex items-center gap-2">
-                    <span class="h-2 w-2 rounded-full bg-[var(--primary)] animate-pulse"></span>
-                    <span id="connection-status">Prêt</span>
-                </span>
-                <span class="font-mono text-[var(--text-label)]">v2.4 / P2P</span>
-            </div>
-        </div>
-    </header>
+:root {
+    --primary: #d9f99d;
+    --primary-dark: #182014;
+    --bg-dark: #101411;
+    --bg-lighter: #151b17;
+    --bg-accent: #1d251f;
+    --border-color: #29312b;
+    --text-light: #eef4eb;
+    --text-muted: #829083;
+    --text-label: #6f7e70;
+    --accent-green: #96b965;
+}
 
-    <div class="flex-1 flex h-[calc(100vh-4rem)] overflow-hidden">
-        <aside class="hidden lg:flex w-[260px] border-r border-[var(--border-color)] bg-[var(--bg-dark)] flex-col overflow-y-auto p-3">
-            <div class="mb-6 px-2">
-                <p class="label mb-3">Mes Infos</p>
-                <div class="space-y-2 text-xs text-[var(--text-light)]">
-                    <div>
-                        <p class="text-[10px] text-[var(--text-label)] uppercase tracking-wider">Nom</p>
-                        <p id="my-name" class="font-mono font-semibold text-[var(--primary)]">Utilisateur</p>
-                    </div>
-                    <div>
-                        <p class="text-[10px] text-[var(--text-label)] uppercase tracking-wider">ID Peer</p>
-                        <p id="my-peer-id" class="font-mono text-[11px] break-all text-[var(--text-muted)]">...</p>
-                    </div>
-                </div>
-            </div>
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; }
+body {
+    font-family: 'Manrope', sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text-light);
+    overflow: hidden;
+}
 
-            <div class="mb-6 px-2 border-t border-[var(--border-color)] pt-4">
-                <p class="label mb-3">Connexions Actives</p>
-                <div id="peers-list" class="space-y-2">
-                    <p class="text-xs text-[var(--text-muted)]">Aucune connexion</p>
-                </div>
-            </div>
+.label {
+    color: var(--text-label);
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+}
 
-            <div class="mt-auto pt-4 border-t border-[var(--border-color)] px-2">
-                <p class="label mb-2">État du Réseau</p>
-                <div id="network-info" class="space-y-1 text-[10px] text-[var(--text-muted)]">
-                    <div class="flex justify-between">
-                        <span>Connexion</span>
-                        <span id="connection-type" class="text-[var(--primary)]">-</span>
-                    </div>
-                    <div class="flex justify-between">
-                        <span>Qualité</span>
-                        <span id="network-quality" class="text-[var(--primary)]">-</span>
-                    </div>
-                    <div class="flex justify-between">
-                        <span>Messages Envoyés</span>
-                        <span id="message-count" class="text-[var(--primary)]">0</span>
-                    </div>
-                </div>
-            </div>
-        </aside>
+.grain {
+    pointer-events: none;
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+}
 
-        <section class="flex-1 flex flex-col min-w-0 border-r border-[var(--border-color)] bg-[var(--bg-dark)]">
-            <div class="border-b border-[var(--border-color)] px-4 sm:px-6 py-4 flex items-center justify-between bg-[var(--bg-dark)]">
-                <div>
-                    <h2 class="text-sm font-semibold text-[var(--text-light)]">Chat en Direct</h2>
-                    <p class="text-xs text-[var(--text-muted)]">Conversations pair-à-pair chiffrées</p>
-                </div>
-                <div id="chat-status" class="status-badge connecting">
-                    <span class="status-dot inactive"></span>
-                    <span>En attente...</span>
-                </div>
-            </div>
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: rgba(217, 249, 157, 0.2);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(217, 249, 157, 0.4); }
 
-            <div class="px-4 py-3 border-b border-[var(--border-color)]">
-                <div class="flex flex-wrap items-center gap-2">
-                    <button type="button" class="mode-pill active" data-mode="auto" aria-pressed="true">Auto</button>
-                    <button type="button" class="mode-pill" data-mode="direct" aria-pressed="false">Direct</button>
-                    <button type="button" class="mode-pill" data-mode="relay" aria-pressed="false">Relais</button>
-                    <span class="text-[10px] text-[var(--text-label)] uppercase tracking-[0.2em]">Mode actuel : <span id="mode-status">AUTO</span></span>
-                </div>
-            </div>
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 8px rgba(217, 249, 157, 0.1); }
+    50% { box-shadow: 0 0 16px rgba(217, 249, 157, 0.3); }
+}
 
-            <div id="messages-container" class="flex-1 overflow-y-auto space-y-4 px-4 sm:px-6 py-6">
-                <div class="text-center py-8">
-                    <p class="text-sm text-[var(--text-muted)]">Aucun message pour le moment</p>
-                </div>
-            </div>
+@keyframes flow-gradient {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+}
 
-            <form id="message-form" class="border-t border-[var(--border-color)] bg-[var(--bg-darker)] p-3 sm:p-4">
-                <div class="composer-grid">
-                    <input id="target-peer-id" type="text" placeholder="ID du pair cible" class="composer-target" />
-                    <input id="message-input" type="text" placeholder="Écrire un message…" class="composer-message" />
-                    <button type="submit" aria-label="Envoyer" class="send-btn">
-                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                        </svg>
-                    </button>
-                </div>
-                <div class="mt-2 flex items-center justify-between text-[10px] text-[var(--text-label)] px-1">
-                    <span id="recommended-mode">Direct WebRTC recommandé</span>
-                    <span>messages chiffrés en P2P</span>
-                </div>
-            </form>
-        </section>
+.pulse-active { animation: pulse-glow 2s ease-in-out infinite; }
+.gradient-flow {
+    background: linear-gradient(90deg, #d9f99d, #96b965, #d9f99d);
+    background-size: 200% 200%;
+    animation: flow-gradient 3s ease-in-out infinite;
+}
 
-        <aside class="hidden xl:flex w-[280px] border-l border-[var(--border-color)] bg-[var(--bg-dark)] flex-col overflow-y-auto p-5">
-            <div class="mb-6">
-                <p class="label mb-2">Connexion Pair-à-Pair</p>
-                <h3 class="text-2xl font-bold tracking-tight text-[var(--text-light)]">WebRTC</h3>
-            </div>
+.transition-smooth { transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
 
-            <div class="rounded-xl border border-[var(--border-color)] bg-[var(--bg-lighter)] p-4 mb-6">
-                <div class="mb-3 flex items-center gap-2 text-[var(--primary)]">
-                    <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19H4v-3L16.5 3.5z"></path>
-                    </svg>
-                    <span class="text-xs font-semibold">Liaison Directe</span>
-                </div>
-                <p class="text-xs leading-relaxed text-[var(--text-muted)]">Le système choisit automatiquement entre connexion directe et relais selon la qualité du réseau et la capacité de mise en relation.</p>
-            </div>
+.btn-primary {
+    background-color: var(--primary);
+    color: var(--primary-dark);
+    border: none;
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition-smooth;
+}
+.btn-primary:hover {
+    background-color: #efffc9;
+    box-shadow: 0 0 12px rgba(217, 249, 157, 0.2);
+}
 
-            <div class="rounded-xl border border-[var(--border-color)] bg-[var(--bg-lighter)] p-4 mb-6">
-                <p class="text-xs font-semibold text-[var(--text-light)] mb-3">Signalisation</p>
-                <textarea id="signal-data" placeholder="Colle ici le JSON de signalisation de l'autre pair…" class="h-24 w-full resize-none rounded-lg border border-[var(--border-color)] bg-[var(--bg-dark)] p-2 font-mono text-[10px] mb-3"></textarea>
-                <div class="grid grid-cols-2 gap-2">
-                    <button type="button" id="btn-create-offer" class="btn-primary text-sm py-2">Créer Offre</button>
-                    <button type="button" id="btn-answer-offer" class="btn-secondary text-sm py-2">Répondre</button>
-                </div>
-            </div>
+.btn-secondary {
+    background: transparent;
+    color: var(--text-light);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition-smooth;
+}
+.btn-secondary:hover {
+    border-color: var(--accent-green);
+    color: var(--primary);
+}
 
-            <div class="mt-auto pt-6 border-t border-[var(--border-color)]">
-                <p class="label mb-3">À Propos</p>
-                <p class="text-[11px] leading-relaxed text-[var(--text-label)]">Le meilleur mode est choisi automatiquement pour garantir la plus grande fiabilité de connexion avec la plus faible latence possible.</p>
-            </div>
-        </aside>
-    </div>
+input[type="text"], input[type="password"], textarea {
+    background-color: var(--bg-lighter);
+    color: var(--text-light);
+    border: 1px solid var(--border-color);
+    border-radius: 0.75rem;
+    padding: 0.5rem 1rem;
+    font-family: inherit;
+    font-size: 0.875rem;
+    transition-smooth;
+}
+input::placeholder, textarea::placeholder { color: var(--text-muted); }
+input:focus, textarea:focus { outline: none; border-color: var(--accent-green); }
 
-    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
-</body>
-</html>
+.message-bubble {
+    padding: 0.75rem 1rem;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    max-width: 85%;
+    word-wrap: break-word;
+}
+.message-bubble.own {
+    background-color: rgba(217, 249, 157, 0.15);
+    color: var(--text-light);
+    border: 1px solid rgba(217, 249, 157, 0.2);
+}
+.message-bubble.peer {
+    background-color: rgba(150, 185, 101, 0.15);
+    color: var(--text-light);
+    border: 1px solid rgba(150, 185, 101, 0.2);
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-family: 'DM Mono', monospace;
+}
+.status-badge.connected {
+    background-color: rgba(217, 249, 157, 0.1);
+    color: var(--primary);
+    border: 1px solid rgba(217, 249, 157, 0.2);
+}
+.status-badge.connecting {
+    background-color: rgba(217, 249, 157, 0.05);
+    color: var(--text-muted);
+    border: 1px solid rgba(217, 249, 157, 0.1);
+}
+.status-dot {
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 50%;
+    display: inline-block;
+}
+.status-dot.active {
+    background-color: var(--primary);
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+.status-dot.inactive { background-color: var(--text-muted); }
+
+.avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.75rem;
+    font-weight: 700;
+    font-size: 0.875rem;
+    background: linear-gradient(135deg, rgba(217, 249, 157, 0.2), rgba(150, 185, 101, 0.2));
+    border: 1px solid rgba(217, 249, 157, 0.3);
+}
+
+.mode-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid var(--border-color);
+    background: rgba(20, 26, 22, 0.8);
+    border-radius: 999px;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition-smooth;
+}
+
+.mode-pill.active {
+    border-color: rgba(217, 249, 157, 0.4);
+    color: var(--primary);
+}
+
+.mode-pill:hover {
+    border-color: rgba(217, 249, 157, 0.3);
+}

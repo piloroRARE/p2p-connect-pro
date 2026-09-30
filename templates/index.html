@@ -1,317 +1,152 @@
-from flask import Flask, render_template, request, jsonify
-from flask_socketio import SocketIO, emit
-from datetime import datetime
-from pathlib import Path
-import json
-import os
-import uuid
-
-app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "p2p-connect-secret-key-2026")
-socketio = SocketIO(app, cors_allowed_origins="*", ping_interval=25, ping_timeout=60)
-
-clients = {}
-peer_to_sid = {}
-peer_metadata = {}
-MESSAGES_FILE = Path(__file__).with_name("messages_history.json")
-
-
-def load_messages():
-    if MESSAGES_FILE.exists():
-        try:
-            with open(MESSAGES_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, list) else []
-        except (OSError, json.JSONDecodeError):
-            return []
-    return []
-
-
-def save_message(message_data):
-    messages = load_messages()
-    messages.append(message_data)
-    try:
-        with open(MESSAGES_FILE, "w", encoding="utf-8") as f:
-            json.dump(messages[-200:], f, ensure_ascii=False, indent=2)
-    except OSError as exc:
-        print(f"Erreur sauvegarde messages: {exc}")
-
-
-def calculate_network_score(client_data):
-    if not isinstance(client_data, dict):
-        return 50
-
-    score = 100
-    connection_type = client_data.get("connectionType", "unknown")
-
-    if connection_type == "4g":
-        score -= 0
-    elif connection_type == "3g":
-        score -= 12
-    elif connection_type == "2g":
-        score -= 25
-    elif connection_type == "slow-2g":
-        score -= 40
-    else:
-        score -= 6
-
-    latency = float(client_data.get("latency", 50) or 50)
-    if latency > 80:
-        score -= min(18, (latency - 80) / 5)
-
-    packet_loss = float(client_data.get("packetLoss", 0) or 0)
-    if packet_loss > 0:
-        score -= min(25, packet_loss * 4)
-
-    return max(0, min(100, round(score)))
-
-
-def get_best_mode(peer1_data, peer2_data):
-    score1 = calculate_network_score(peer1_data)
-    score2 = calculate_network_score(peer2_data)
-    average = (score1 + score2) / 2
-    minimum = min(score1, score2)
-
-    if average >= 70:
-        return "direct", minimum
-    if average >= 50:
-        return "direct", minimum
-    return "relay", minimum
-
-
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-
-@app.route("/api/messages")
-def api_messages():
-    return jsonify({"messages": load_messages()[-50:], "count": len(load_messages())})
-
-
-@socketio.on("connect")
-def handle_connect():
-    emit(
-        "server-status",
-        {
-            "status": "connected",
-            "message": "Connexion au serveur de signalisation établie",
-            "timestamp": datetime.now().isoformat(),
-        },
-    )
-
-
-@socketio.on("register")
-def handle_register(payload):
-    if not payload:
-        return emit("error", {"message": "Payload invalide"})
-
-    peer_id = payload.get("peerId")
-    name = payload.get("name") or "Utilisateur"
-    network_info = payload.get("networkInfo") or {}
-
-    if not peer_id:
-        return emit("error", {"message": "peerId requis"})
-
-    clients[peer_id] = {
-        "name": name,
-        "sid": request.sid,
-        "connected_at": datetime.now().isoformat(),
-        "network_info": network_info,
-    }
-
-    peer_to_sid[peer_id] = request.sid
-    peer_metadata[peer_id] = {
-        "connectionType": network_info.get("type", "unknown"),
-        "latency": network_info.get("latency", 60),
-        "packetLoss": network_info.get("packetLoss", 0),
-        "lastUpdate": datetime.now().isoformat(),
-    }
-
-    online_peers = [
-        {
-            "peerId": pid,
-            "name": info["name"],
-            "networkScore": calculate_network_score(peer_metadata.get(pid, {})),
-            "connectionType": info.get("network_info", {}).get("type", "unknown"),
-        }
-        for pid, info in clients.items()
-        if pid != peer_id
-    ]
-
-    emit(
-        "peer-registered",
-        {
-            "peerId": peer_id,
-            "name": name,
-            "networkScore": calculate_network_score(peer_metadata.get(peer_id, {})),
-        },
-    )
-    emit("online-peers", online_peers, broadcast=True)
-    emit("message-history", {"messages": load_messages()[-50:]})
-
-
-@socketio.on("update-network-info")
-def handle_network_update(payload):
-    if not payload:
-        return
-
-    peer_id = payload.get("peerId")
-    network_info = payload.get("networkInfo") or {}
-
-    if not peer_id:
-        return
-
-    peer_metadata[peer_id] = {
-        "connectionType": network_info.get("type", "unknown"),
-        "latency": network_info.get("latency", 60),
-        "packetLoss": network_info.get("packetLoss", 0),
-        "lastUpdate": datetime.now().isoformat(),
-    }
-
-    if peer_id in clients:
-        clients[peer_id]["network_info"] = network_info
-
-    online_peers = [
-        {
-            "peerId": pid,
-            "name": info["name"],
-            "networkScore": calculate_network_score(peer_metadata.get(pid, {})),
-            "connectionType": info.get("network_info", {}).get("type", "unknown"),
-        }
-        for pid, info in clients.items()
-    ]
-    emit("online-peers", online_peers, broadcast=True)
-
-
-@socketio.on("signal")
-def handle_signal(payload):
-    if not payload:
-        return
-
-    target_peer = payload.get("target")
-    source_peer = payload.get("from")
-    signal_data = payload.get("signal")
-
-    if not target_peer or not signal_data:
-        return emit("error", {"message": "Signal invalide"})
-
-    target_sid = peer_to_sid.get(target_peer)
-    if not target_sid:
-        return emit("error", {"message": f"Le pair {target_peer} n'est pas connecté"})
-
-    source_data = peer_metadata.get(source_peer, {})
-    target_data = peer_metadata.get(target_peer, {})
-    recommended_mode, confidence = get_best_mode(source_data, target_data)
-
-    emit(
-        "signal",
-        {
-            "from": source_peer,
-            "signal": signal_data,
-            "target": target_peer,
-            "recommendedMode": recommended_mode,
-            "modeConfidence": confidence,
-            "timestamp": datetime.now().isoformat(),
-        },
-        room=target_sid,
-    )
-
-
-@socketio.on("relay-message")
-def handle_relay_message(payload):
-    if not payload:
-        return
-
-    target_peer = payload.get("to")
-    from_peer = payload.get("from")
-    message_text = payload.get("message")
-
-    if not target_peer or not message_text:
-        return emit("error", {"message": "Message relais invalide"})
-
-    target_sid = peer_to_sid.get(target_peer)
-    if not target_sid:
-        return emit("error", {"message": f"Le pair {target_peer} n'est pas connecté"})
-
-    message_record = {
-        "id": str(uuid.uuid4()),
-        "from": from_peer,
-        "to": target_peer,
-        "message": message_text,
-        "timestamp": datetime.now().isoformat(),
-        "deliveryMode": "relay",
-    }
-    save_message(message_record)
-
-    emit(
-        "relay-message",
-        {
-            "from": from_peer,
-            "message": message_text,
-            "timestamp": message_record["timestamp"],
-            "deliveryMode": "relay",
-        },
-        room=target_sid,
-    )
-
-
-@socketio.on("direct-message-sent")
-def handle_direct_message(payload):
-    if not payload:
-        return
-
-    from_peer = payload.get("from")
-    to_peer = payload.get("to")
-    message_text = payload.get("message")
-
-    if not from_peer or not to_peer:
-        return
-
-    message_record = {
-        "id": str(uuid.uuid4()),
-        "from": from_peer,
-        "to": to_peer,
-        "message": message_text,
-        "timestamp": datetime.now().isoformat(),
-        "deliveryMode": "direct",
-    }
-    save_message(message_record)
-
-
-@socketio.on("disconnect")
-def handle_disconnect():
-    for peer_id, data in list(clients.items()):
-        if data.get("sid") == request.sid:
-            del clients[peer_id]
-            peer_to_sid.pop(peer_id, None)
-            peer_metadata.pop(peer_id, None)
-            break
-
-    online_peers = [
-        {
-            "peerId": pid,
-            "name": info["name"],
-            "networkScore": calculate_network_score(peer_metadata.get(pid, {})),
-            "connectionType": info.get("network_info", {}).get("type", "unknown"),
-        }
-        for pid, info in clients.items()
-    ]
-    emit("online-peers", online_peers, broadcast=True)
-
-
-if __name__ == "__main__":
-    if not MESSAGES_FILE.exists():
-        with open(MESSAGES_FILE, "w", encoding="utf-8") as f:
-            json.dump([], f)
-
-    print("\n" + "=" * 64)
-    print("  P2P Connect Pro - Serveur de signalisation")
-    print("=" * 64)
-    print("  URL: http://0.0.0.0:5000")
-    print(f"  Historique: {MESSAGES_FILE.resolve()}")
-    print("=" * 64 + "\n")
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
-
-
-# End of app.py
+<!DOCTYPE html>
+<html lang="fr" class="h-full">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>P2P Connect Pro - Chat Décentralisé</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+    <div class="grain"></div>
+
+    <header class="border-b border-[var(--border-color)] bg-[var(--bg-dark)]/80 backdrop-blur shrink-0 z-30 h-16 flex items-center">
+        <div class="w-full px-4 sm:px-6 lg:px-8 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--primary)] text-[var(--primary-dark)] shadow-[0_0_24px_rgba(217,249,157,0.14)]">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="6" cy="6" r="3"></circle>
+                        <circle cx="18" cy="6" r="3"></circle>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <circle cx="18" cy="18" r="3"></circle>
+                        <line x1="9" y1="6" x2="15" y2="6"></line>
+                        <line x1="9" y1="18" x2="15" y2="18"></line>
+                        <line x1="6" y1="9" x2="6" y2="15"></line>
+                        <line x1="18" y1="9" x2="18" y2="15"></line>
+                    </svg>
+                </div>
+                <div>
+                    <p class="font-bold text-lg tracking-tight text-[var(--text-light)]">p2p<span class="text-[var(--primary)]">.</span>connect</p>
+                    <p class="text-[10px] uppercase tracking-[0.22em] text-[var(--text-label)]">décentralisé · sans serveur</p>
+                </div>
+            </div>
+            <div class="hidden items-center gap-5 text-xs text-[var(--text-muted)] sm:flex">
+                <span class="flex items-center gap-2">
+                    <span class="h-2 w-2 rounded-full bg-[var(--primary)] animate-pulse"></span>
+                    <span id="connection-status">Prêt</span>
+                </span>
+                <span class="font-mono text-[var(--text-label)]">v2.4 / P2P</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex-1 flex h-[calc(100vh-4rem)] overflow-hidden">
+        <aside class="hidden lg:flex w-[260px] border-r border-[var(--border-color)] bg-[var(--bg-dark)] flex-col overflow-y-auto p-3">
+            <div class="mb-6 px-2">
+                <p class="label mb-3">Mes Infos</p>
+                <div class="space-y-2 text-xs text-[var(--text-light)]">
+                    <div>
+                        <p class="text-[10px] text-[var(--text-label)] uppercase tracking-wider">Nom</p>
+                        <p id="my-name" class="font-mono font-semibold text-[var(--primary)]">Utilisateur</p>
+                    </div>
+                    <div>
+                        <p class="text-[10px] text-[var(--text-label)] uppercase tracking-wider">ID Peer</p>
+                        <p id="my-peer-id" class="font-mono text-[11px] break-all text-[var(--text-muted)]">...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mb-6 px-2 border-t border-[var(--border-color)] pt-4">
+                <p class="label mb-3">Connexions Actives</p>
+                <div id="peers-list" class="space-y-2">
+                    <p class="text-xs text-[var(--text-muted)]">Aucune connexion</p>
+                </div>
+            </div>
+
+            <div class="mt-auto pt-4 border-t border-[var(--border-color)] px-2">
+                <p class="label mb-2">État du Réseau</p>
+                <div id="network-info" class="space-y-1 text-[10px] text-[var(--text-muted)]">
+                    <div class="flex justify-between">
+                        <span>Connexion</span>
+                        <span id="connection-type" class="text-[var(--primary)]">-</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Qualité</span>
+                        <span id="network-quality" class="text-[var(--primary)]">-</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Messages</span>
+                        <span id="message-count" class="text-[var(--primary)]">0</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <section class="flex-1 flex flex-col min-w-0 border-r border-[var(--border-color)] bg-[var(--bg-dark)]">
+            <div class="border-b border-[var(--border-color)] px-4 sm:px-6 py-4 flex items-center justify-between bg-[var(--bg-dark)]">
+                <div>
+                    <h2 class="text-sm font-semibold text-[var(--text-light)]">Chat en Direct</h2>
+                    <p class="text-xs text-[var(--text-muted)]">Conversations P2P chiffrées</p>
+                </div>
+                <div id="chat-status" class="status-badge connecting">
+                    <span class="status-dot inactive"></span>
+                    <span>En attente...</span>
+                </div>
+            </div>
+
+            <div class="px-4 py-3 border-b border-[var(--border-color)]">
+                <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" class="mode-pill active" data-mode="auto" aria-pressed="true">Auto</button>
+                    <button type="button" class="mode-pill" data-mode="direct" aria-pressed="false">Direct</button>
+                    <button type="button" class="mode-pill" data-mode="relay" aria-pressed="false">Relais</button>
+                    <span class="text-[10px] text-[var(--text-label)] uppercase tracking-[0.2em]">Mode : <span id="mode-status">AUTO</span></span>
+                </div>
+            </div>
+
+            <div id="messages-container" class="flex-1 overflow-y-auto space-y-4 px-4 sm:px-6 py-6">
+                <div class="text-center py-8">
+                    <p class="text-sm text-[var(--text-muted)]">Aucun message pour le moment</p>
+                </div>
+            </div>
+
+            <form id="message-form" class="border-t border-[var(--border-color)] bg-[var(--bg-dark)] p-3 sm:p-4">
+                <div class="flex items-end gap-2 rounded-xl border border-[var(--border-color)] bg-[var(--bg-lighter)] px-3 py-2 focus-within:border-[var(--accent-green)]">
+                    <input id="target-peer-id" type="text" placeholder="ID du pair" class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]" />
+                    <input id="message-input" type="text" placeholder="Message..." class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]" />
+                    <button type="submit" aria-label="Envoyer" class="flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--primary)] text-[var(--primary-dark)] hover:bg-[#efffc9]">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+            </form>
+        </section>
+
+        <aside class="hidden xl:flex w-[280px] border-l border-[var(--border-color)] bg-[var(--bg-dark)] flex-col overflow-y-auto p-5">
+            <div class="mb-6">
+                <p class="label mb-2">À Propos</p>
+                <h3 class="text-lg font-bold text-[var(--text-light)]">P2P Connect Pro</h3>
+            </div>
+
+            <div class="space-y-4 text-xs text-[var(--text-muted)]">
+                <p>Mode automatique pour sélectionner la meilleure route de connexion.</p>
+                <p>Direct WebRTC ou Relay via serveur de signalisation.</p>
+                <p>Historique persistant et scores réseau en temps réel.</p>
+            </div>
+
+            <div class="mt-auto pt-6 border-t border-[var(--border-color)] text-[11px] text-[var(--text-label)]">
+                <p class="mb-2">Développé avec :</p>
+                <ul class="space-y-1 text-[10px]">
+                    <li>• Flask / Socket.IO</li>
+                    <li>• WebRTC P2P</li>
+                    <li>• Architecture décentralisée</li>
+                </ul>
+            </div>
+        </aside>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
