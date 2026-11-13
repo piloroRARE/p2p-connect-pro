@@ -62,7 +62,11 @@
           <h2>Conversation</h2>
           <p id="peer-label">Connecté à : —</p>
         </div>
-        <button id="disconnect-btn" class="btn ghost danger">Déconnecter</button>
+        <div class="chat-actions">
+          <button id="call-audio-btn" class="btn ghost" title="Appel audio en direct">📞 Audio</button>
+          <button id="call-video-btn" class="btn ghost" title="Appel vidéo en direct">🎥 Vidéo</button>
+          <button id="disconnect-btn" class="btn ghost danger">Déconnecter</button>
+        </div>
       </div>
 
       <div id="key-banner" class="key-banner" hidden>
@@ -87,6 +91,29 @@
       </div>
     </section>
   </main>
+
+  <div id="call-overlay" class="call-overlay" hidden>
+    <video id="remote-video" class="remote-video" autoplay playsinline></video>
+    <video id="local-video" class="local-video" autoplay playsinline muted></video>
+    <div class="call-overlay-info">
+      <span id="call-timer">00:00</span>
+      <span id="call-quality" class="quality good">Réseau : —</span>
+      <span id="call-stats"></span>
+    </div>
+    <div class="call-controls">
+      <button id="mute-btn" class="ctrl-btn" title="Couper / réactiver le micro">🎤</button>
+      <button id="cam-btn" class="ctrl-btn" title="Couper / réactiver la caméra">📷</button>
+      <button id="hangup-btn" class="ctrl-btn hangup" title="Terminer l'appel">📴</button>
+    </div>
+  </div>
+
+  <div id="incoming-call" class="incoming-call" hidden>
+    <p id="incoming-text">📞 Appel entrant…</p>
+    <div class="row">
+      <button id="accept-call" class="btn primary">Accepter</button>
+      <button id="decline-call" class="btn ghost danger">Refuser</button>
+    </div>
+  </div>
 
   <footer>
     <p>WebRTC + PeerJS : le signaling gratuit sert uniquement à la mise en relation initiale ;

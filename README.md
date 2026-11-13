@@ -46,8 +46,18 @@ Ouvrez ensuite `http://localhost:8000`.
 ## Fonctionnalités
 
 - Chat en temps réel entre deux personnes
+- **Appels audio et vidéo en direct** (P2P, sans serveur) avec micro/caméra, mute, coupure caméra
+- **Gestion de réseau intelligente** :
+  - mesure de la latence sur le canal de données **avant** chaque appel (estimation affichée) ;
+  - adaptation automatique du débit vidéo (2,5 Mbit/s → 150 kbit/s), du débit audio et de la
+    résolution (720p → 240p) selon la latence et la perte de paquets mesurées en continu ;
+  - coupure vidéo automatique et passage en audio seul si le réseau s'effondre, réactivation
+    automatique au rétablissement ;
+  - détection des déconnexions ICE et relance automatique de la connexion ;
+  - indicateur de qualité en direct (latence, débit, perte) pendant l'appel.
 - **Chiffrement de bout en bout AES-256-GCM** de tous les messages et fichiers (clé dérivée de la
-  phrase secrète partagée, jamais transmise ; vérification automatique entre les deux contacts)
+  phrase secrète partagée, jamais transmise ; vérification automatique entre les deux contacts).
+  Les appels sont protégés par le chiffrement DTLS du transport WebRTC.
 - Envoi de documents de toute taille (découpage automatique, reprise du flux si le réseau ralentit)
 - Barre de progression d'envoi et bouton de téléchargement côté destinataire
 - Lien d'invitation copiable (`?peer=<id>` pour connexion automatique)
