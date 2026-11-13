@@ -41,6 +41,14 @@
         <p class="hint" id="connect-error"></p>
       </div>
 
+      <div class="field">
+        <label>🔒 Phrase secrète partagée (chiffrement de bout en bout)</label>
+        <div class="row">
+          <input id="passphrase" type="password" placeholder="Choisissez une phrase secrète avec votre contact" autocomplete="off">
+        </div>
+        <p class="hint">Les deux personnes doivent saisir exactement la même phrase. Elle ne quitte jamais votre appareil : elle sert uniquement à dériver localement la clé de chiffrement AES-256 de vos messages et fichiers.</p>
+      </div>
+
       <div class="steps">
         <div class="step"><span>1</span> Copiez votre ID ou votre lien d'invitation</div>
         <div class="step"><span>2</span> Votre contact colle l'ID chez lui (et vous le sien)</div>
@@ -55,6 +63,14 @@
           <p id="peer-label">Connecté à : —</p>
         </div>
         <button id="disconnect-btn" class="btn ghost danger">Déconnecter</button>
+      </div>
+
+      <div id="key-banner" class="key-banner" hidden>
+        <span>🔒 Chiffrement inactif — saisissez la même phrase secrète que votre contact :</span>
+        <div class="row">
+          <input id="banner-passphrase" type="password" placeholder="Phrase secrète partagée" autocomplete="off">
+          <button id="banner-apply" class="btn primary">Activer</button>
+        </div>
       </div>
 
       <div id="messages" class="messages"></div>
@@ -74,7 +90,8 @@
 
   <footer>
     <p>WebRTC + PeerJS : le signaling gratuit sert uniquement à la mise en relation initiale ;
-    ensuite les messages et fichiers circulent directement entre les deux navigateurs, chiffrés de bout en bout (DTLS).</p>
+    ensuite les messages et fichiers circulent directement entre les deux navigateurs, chiffrés
+doublement : DTLS (transport) + AES-256-GCM de bout en bout avec votre phrase secrète.</p>
   </footer>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>

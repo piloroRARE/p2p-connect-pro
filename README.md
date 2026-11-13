@@ -2,7 +2,13 @@
 
 Application web **pair-à-pair (P2P)** de chat et d'envoi de documents, **sans serveur applicatif**.
 Les deux personnes doivent simplement être connectées à Internet : les messages et les fichiers
-circulent **directement entre les deux navigateurs** via WebRTC, chiffrés de bout en bout (DTLS).
+circulent **directement entre les deux navigateurs** via WebRTC, avec un **double chiffrement** :
+
+- **DTLS** : chiffrement obligatoire du transport WebRTC (intégré aux navigateurs) ;
+- **AES-256-GCM de bout en bout** : chaque message et chaque morceau de fichier est chiffré
+  avec une clé dérivée localement (PBKDF2-SHA256, 250 000 itérations) d'une **phrase secrète
+  partagée** saisie par les deux personnes. La phrase secrète ne quitte jamais les appareils :
+  même le signaling PeerJS ne peut pas lire le contenu des échanges.
 
 ## Fonctionnement
 
@@ -10,7 +16,9 @@ circulent **directement entre les deux navigateurs** via WebRTC, chiffrés de bo
 2. Elle partage son ID (ou son **lien d'invitation** copiable) par mail, SMS ou messagerie.
 3. Le contact colle l'ID : la connexion WebRTC s'établit (signaling gratuit PeerJS, utilisé
    **uniquement** pour la mise en relation initiale).
-4. Ensuite, tout est direct : chat en temps réel et transfert de documents par morceaux
+4. Les deux personnes saisissent la **même phrase secrète** : le chiffrement de bout en bout
+   s'active et est vérifié automatiquement.
+5. Ensuite, tout est direct : chat en temps réel et transfert de documents chiffrés par morceaux
    (découpage en tranches de 64 Ko avec contrôle de la mémoire tampon et barre de progression).
 
 Aucune donnée (message ou fichier) ne transite par un serveur : seul l'échange des adresses
@@ -38,6 +46,8 @@ Ouvrez ensuite `http://localhost:8000`.
 ## Fonctionnalités
 
 - Chat en temps réel entre deux personnes
+- **Chiffrement de bout en bout AES-256-GCM** de tous les messages et fichiers (clé dérivée de la
+  phrase secrète partagée, jamais transmise ; vérification automatique entre les deux contacts)
 - Envoi de documents de toute taille (découpage automatique, reprise du flux si le réseau ralentit)
 - Barre de progression d'envoi et bouton de téléchargement côté destinataire
 - Lien d'invitation copiable (`?peer=<id>` pour connexion automatique)
@@ -55,3 +65,5 @@ Ouvrez ensuite `http://localhost:8000`.
 - Le signaling PeerJS public sert uniquement à la mise en relation ; si les deux réseaux
   bloquent totalement le P2P (NAT très restrictif sans TURN), la connexion peut échouer.
 - Une seule conversation à la fois par page.
+- Si la phrase secrète est perdue ou mal recopiée, les messages reçus restent illisibles :
+  il suffit de la ressaisir à l'identique pour déchiffrer les échanges en attente.
