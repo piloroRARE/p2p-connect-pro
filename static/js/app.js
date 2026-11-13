@@ -1,175 +1,392 @@
-const socket = io();
-const appState = {
-  peerId: null,
-  name: `User-${Math.floor(Math.random() * 10000)}`,
-  selectedMode: 'auto',
-  peers: new Map(),
-  rtcConnections: new Map(),
-  dataChannels: new Map(),
-  messageCount: 0,
+"use strict";
+
+const CHUNK_SIZE = 64 * 1024;
+const MAX_BUFFERED = 4 * 1024 * 1024;
+const BUFFER_LOW = 512 * 1024;
+
+const els = {
+  status: document.getElementById("status"),
+  statusText: document.getElementById("status-text"),
+  myId: document.getElementById("my-id"),
+  copyId: document.getElementById("copy-id"),
+  copyLink: document.getElementById("copy-link"),
+  peerId: document.getElementById("peer-id"),
+  connectBtn: document.getElementById("connect-btn"),
+  connectError: document.getElementById("connect-error"),
+  connectPanel: document.getElementById("connect-panel"),
+  chatPanel: document.getElementById("chat-panel"),
+  peerLabel: document.getElementById("peer-label"),
+  disconnectBtn: document.getElementById("disconnect-btn"),
+  messages: document.getElementById("messages"),
+  fileBtn: document.getElementById("file-btn"),
+  fileInput: document.getElementById("file-input"),
+  textInput: document.getElementById("text-input"),
+  sendBtn: document.getElementById("send-btn"),
+  sendProgress: document.getElementById("send-progress"),
+  sendProgressLabel: document.getElementById("send-progress-label"),
+  sendProgressBar: document.getElementById("send-progress-bar"),
 };
 
-const CONFIG = {
-  iceServers: [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
-  ]
-};
+let peer = null;
+let conn = null;
+let sendingFile = false;
 
-function updateModeUI() {
-  document.querySelectorAll('[data-mode]').forEach(btn => {
-    const isActive = btn.dataset.mode === appState.selectedMode;
-    btn.classList.toggle('active', isActive);
-  });
-  const modeStatus = document.getElementById('mode-status');
-  if (modeStatus) modeStatus.textContent = appState.selectedMode.toUpperCase();
+const incomingFiles = new Map();
+
+function setStatus(kind, text) {
+  els.status.className = "status " + kind;
+  els.statusText.textContent = text;
 }
 
-function getNetworkQuality() {
-  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-  return conn ? conn.effectiveType : '4g';
+function timeNow() {
+  return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-function evaluateBestMode(peerId) {
-  const quality = getNetworkQuality();
-  const slowNetwork = ['slow-2g', '2g'].includes(quality);
-  
-  if (appState.selectedMode === 'direct') return 'direct';
-  if (appState.selectedMode === 'relay') return 'relay';
-  
-  return slowNetwork ? 'relay' : 'direct';
+function addSystem(text) {
+  const div = document.createElement("div");
+  div.className = "system";
+  div.textContent = text;
+  els.messages.appendChild(div);
+  els.messages.scrollTop = els.messages.scrollHeight;
 }
 
-function setConnectionStatus(status, type = 'connecting') {
-  const badge = document.getElementById('chat-status');
-  if (!badge) return;
-  badge.className = `status-badge ${type === 'connected' ? 'connected' : 'connecting'}`;
-  badge.innerHTML = `<span class="status-dot ${type === 'connected' ? 'active' : 'inactive'}"></span><span>${status}</span>`;
+function addChatMessage(text, mine) {
+  const div = document.createElement("div");
+  div.className = "msg " + (mine ? "me" : "them");
+  div.textContent = text;
+  const meta = document.createElement("span");
+  meta.className = "meta";
+  meta.textContent = timeNow();
+  div.appendChild(meta);
+  els.messages.appendChild(div);
+  els.messages.scrollTop = els.messages.scrollHeight;
 }
 
-function displayMessage(text, type, sender = 'User') {
-  const container = document.getElementById('messages-container');
-  if (container.children.length === 1 && container.children[0].textContent.includes('Aucun')) {
-    container.innerHTML = '';
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + " o";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " Ko";
+  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + " Mo";
+  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " Go";
+}
+
+function addFileMessage(fileId, name, size, mine) {
+  const div = document.createElement("div");
+  div.className = "msg file " + (mine ? "me" : "them");
+  div.dataset.fileId = fileId;
+
+  const label = document.createElement("span");
+  label.className = "file-name";
+  label.textContent = "📄 " + name;
+  div.appendChild(label);
+
+  const sizeSpan = document.createElement("span");
+  sizeSpan.className = "file-size";
+  sizeSpan.textContent = formatSize(size);
+  div.appendChild(sizeSpan);
+
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  const fill = document.createElement("div");
+  bar.appendChild(fill);
+  div.appendChild(bar);
+
+  els.messages.appendChild(div);
+  els.messages.scrollTop = els.messages.scrollHeight;
+  return { node: div, fill };
+}
+
+function setFileProgress(fileId, ratio) {
+  const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
+  if (node) node.querySelector(".bar > div").style.width = Math.round(ratio * 100) + "%";
+}
+
+function finishFileMessage(fileId, blob, name, mine) {
+  const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
+  if (!node) return;
+  const bar = node.querySelector(".bar");
+  if (bar) bar.remove();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.className = "dl";
+  link.href = url;
+  link.download = name;
+  link.textContent = mine ? "Télécharger une copie" : "⬇ Télécharger";
+  node.appendChild(link);
+  els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function showChat(peerId) {
+  els.connectPanel.hidden = true;
+  els.chatPanel.hidden = false;
+  els.peerLabel.textContent = "Connecté à : " + peerId;
+}
+
+function showConnect() {
+  els.chatPanel.hidden = true;
+  els.connectPanel.hidden = false;
+  els.peerId.value = "";
+  setStatus("offline", "Hors ligne");
+}
+
+function resetProgress() {
+  sendingFile = false;
+  els.sendProgress.hidden = true;
+  els.sendProgressBar.style.width = "0";
+  els.sendBtn.disabled = false;
+  els.fileBtn.disabled = false;
+}
+
+function teardown(statusText) {
+  if (conn) {
+    try { conn.close(); } catch (_) {}
+    conn = null;
   }
-  
-  const messageEl = document.createElement('div');
-  messageEl.className = `flex gap-3 ${type === 'own' ? 'flex-row-reverse' : ''}`;
-  
-  const avatar = document.createElement('div');
-  avatar.className = 'avatar';
-  avatar.textContent = sender[0].toUpperCase();
-  
-  const content = document.createElement('div');
-  const senderSpan = document.createElement('div');
-  senderSpan.className = 'text-xs font-semibold text-[var(--text-light)] mb-1';
-  senderSpan.textContent = type === 'own' ? 'Vous' : sender.slice(0, 8) + '...';
-  
-  const bubble = document.createElement('div');
-  bubble.className = `message-bubble ${type === 'own' ? 'own' : 'peer'}`;
-  bubble.textContent = text;
-  
-  content.appendChild(senderSpan);
-  content.appendChild(bubble);
-  messageEl.appendChild(avatar);
-  messageEl.appendChild(content);
-  container.appendChild(messageEl);
-  container.scrollTop = container.scrollHeight;
+  incomingFiles.clear();
+  resetProgress();
+  showConnect();
+  setStatus("waiting", statusText);
 }
 
-function renderPeerList() {
-  const list = document.getElementById('peers-list');
-  if (!list) return;
-  
-  const peers = Array.from(appState.peers.values());
-  if (!peers.length) {
-    list.innerHTML = '<p class="text-xs text-[var(--text-muted)]">Aucune connexion</p>';
+function bindConnection(c) {
+  conn = c;
+
+  conn.on("open", () => {
+    showChat(conn.peer);
+    setStatus("online", "Connecté (P2P direct)");
+    addSystem("Connexion établie — vos échanges sont désormais directs et chiffrés.");
+    resetProgress();
+  });
+
+  conn.on("data", handleData);
+
+  conn.on("close", () => {
+    addSystem("Votre contact s'est déconnecté.");
+    teardown("Contact déconnecté");
+  });
+
+  conn.on("error", (err) => {
+    addSystem("Erreur de connexion : " + err.message);
+    teardown("Erreur de connexion");
+  });
+}
+
+function handleData(data) {
+  if (!data || typeof data !== "object") return;
+
+  switch (data.type) {
+    case "chat":
+      addChatMessage(String(data.text), false);
+      break;
+
+    case "file-meta": {
+      incomingFiles.set(data.id, { name: data.name, size: data.size, mime: data.mime, chunks: [], received: 0 });
+      addFileMessage(data.id, data.name, data.size, false);
+      break;
+    }
+
+    case "file-chunk": {
+      const entry = incomingFiles.get(data.id);
+      if (!entry) break;
+      const buf = data.data instanceof ArrayBuffer ? data.data : new Uint8Array(data.data).buffer;
+      entry.chunks.push(buf);
+      entry.received += buf.byteLength;
+      setFileProgress(data.id, entry.size ? entry.received / entry.size : 0);
+      break;
+    }
+
+    case "file-end": {
+      const entry = incomingFiles.get(data.id);
+      if (!entry) break;
+      const blob = new Blob(entry.chunks, { type: entry.mime || "application/octet-stream" });
+      finishFileMessage(data.id, blob, entry.name, false);
+      incomingFiles.delete(data.id);
+      break;
+    }
+
+    case "file-abort": {
+      const entry = incomingFiles.get(data.id);
+      if (entry) {
+        const node = els.messages.querySelector('[data-file-id="' + data.id + '"]');
+        if (node) node.remove();
+        incomingFiles.delete(data.id);
+      }
+      break;
+    }
+  }
+}
+
+async function sendFile(file) {
+  if (!conn || !conn.open || sendingFile) return;
+  sendingFile = true;
+  els.sendBtn.disabled = true;
+  els.fileBtn.disabled = true;
+  els.sendProgress.hidden = false;
+
+  const fileId = (crypto.randomUUID && crypto.randomUUID()) || String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+  addFileMessage(fileId, file.name, file.size, true);
+
+  try {
+    conn.send({ type: "file-meta", id: fileId, name: file.name, size: file.size, mime: file.type });
+
+    const channel = conn.dataChannel;
+    if (channel) {
+      channel.bufferedAmountLowThreshold = BUFFER_LOW;
+    }
+
+    for (let offset = 0; offset < file.size; offset += CHUNK_SIZE) {
+      if (channel && channel.bufferedAmount > MAX_BUFFERED) {
+        await new Promise((resolve) => {
+          const onLow = () => {
+            channel.removeEventListener("bufferedamountlow", onLow);
+            resolve();
+          };
+          channel.addEventListener("bufferedamountlow", onLow);
+          setTimeout(onLow, 3000);
+        });
+      }
+      const buf = await file.slice(offset, offset + CHUNK_SIZE).arrayBuffer();
+      conn.send({ type: "file-chunk", id: fileId, data: buf });
+      const sent = Math.min(offset + CHUNK_SIZE, file.size);
+      els.sendProgressBar.style.width = Math.round((sent / file.size) * 100) + "%";
+      els.sendProgressLabel.textContent = "Envoi de " + file.name + " — " + Math.round((sent / file.size) * 100) + "%";
+    }
+
+    conn.send({ type: "file-end", id: fileId });
+    finishFileMessage(fileId, file.slice(0), file.name, true);
+    els.sendProgressLabel.textContent = "Fichier envoyé ✓";
+    setTimeout(() => { els.sendProgress.hidden = true; }, 1500);
+  } catch (err) {
+    conn.send({ type: "file-abort", id: fileId });
+    const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
+    if (node) node.remove();
+    addSystem("Échec de l'envoi du fichier : " + err.message);
+  } finally {
+    resetProgress();
+  }
+}
+
+function sendChat() {
+  const text = els.textInput.value.trim();
+  if (!text || !conn || !conn.open) return;
+  conn.send({ type: "chat", text: text });
+  addChatMessage(text, true);
+  els.textInput.value = "";
+  els.textInput.focus();
+}
+
+function connectTo(destId) {
+  const dest = (destId || "").trim();
+  if (!dest) {
+    els.connectError.textContent = "Veuillez entrer l'identifiant de votre contact.";
+    els.connectError.className = "hint error";
     return;
   }
-  
-  list.innerHTML = peers.map(p => `
-    <div class="flex items-center gap-2 p-2 rounded-lg bg-[var(--bg-lighter)] border border-[var(--border-color)]">
-      <div class="avatar text-xs">${p.peerId[0].toUpperCase()}</div>
-      <div class="flex-1 min-w-0">
-        <p class="text-xs font-medium text-[var(--text-light)] truncate">${p.name}</p>
-        <p class="text-[10px] text-[var(--text-label)]">${p.mode || 'Auto'}</p>
-      </div>
-      <span class="h-2 w-2 rounded-full bg-[var(--primary)]"></span>
-    </div>
-  `).join('');
+  if (!peer || peer.destroyed || !peer.open) {
+    els.connectError.textContent = "Votre identifiant n'est pas encore prêt, patientez une seconde.";
+    els.connectError.className = "hint error";
+    return;
+  }
+  els.connectError.textContent = "";
+  setStatus("waiting", "Connexion en cours…");
+  const c = peer.connect(dest, { reliable: true });
+  bindConnection(c);
 }
 
-function updateNetworkInfo() {
-  const quality = getNetworkQuality();
-  const typeEl = document.getElementById('connection-type');
-  const qualEl = document.getElementById('network-quality');
-  if (typeEl) typeEl.textContent = evaluateBestMode() === 'direct' ? 'Direct' : 'Relay';
-  if (qualEl) qualEl.textContent = quality;
+function initPeer() {
+  if (typeof Peer === "undefined") {
+    setStatus("offline", "Bibliothèque PeerJS non chargée");
+    els.myId.value = "";
+    els.myId.placeholder = "Erreur de chargement — vérifiez votre connexion internet";
+    return;
+  }
+
+  peer = new Peer(null, { debug: 1 });
+
+  peer.on("open", (id) => {
+    els.myId.value = id;
+    els.copyId.disabled = false;
+    els.copyLink.disabled = false;
+    setStatus("waiting", "En attente d'un contact");
+
+    const invited = new URLSearchParams(window.location.search).get("peer");
+    if (invited) {
+      els.peerId.value = invited;
+      connectTo(invited);
+    }
+  });
+
+  peer.on("connection", (c) => {
+    if (conn && conn.open) {
+      c.on("open", () => c.close());
+      return;
+    }
+    bindConnection(c);
+  });
+
+  peer.on("error", (err) => {
+    const map = {
+      "peer-unavailable": "Contact introuvable : vérifiez l'identifiant saisi.",
+      "unavailable-id": "Cet identifiant est déjà utilisé, rechargez la page.",
+      "network": "Problème de réseau : reconnectez-vous à internet puis rechargez.",
+      "browser-incompatible": "Votre navigateur ne prend pas en charge WebRTC.",
+    };
+    const msg = map[err.type] || "Erreur : " + (err.message || err.type);
+    if (err.type === "peer-unavailable") {
+      els.connectError.textContent = msg;
+      els.connectError.className = "hint error";
+      setStatus("waiting", "En attente d'un contact");
+    } else {
+      addSystem(msg);
+      setStatus("offline", "Erreur réseau");
+    }
+  });
+
+  peer.on("disconnected", () => {
+    setStatus("waiting", "Reconnexion au réseau…");
+    try { peer.reconnect(); } catch (_) {}
+  });
 }
 
-socket.on('connect', () => {
-  appState.peerId = `user-${Math.random().toString(36).slice(2, 8)}`;
-  socket.emit('register', { peerId: appState.peerId, name: appState.name });
-  document.getElementById('my-peer-id').textContent = appState.peerId;
-  document.getElementById('my-name').textContent = appState.name;
-  updateNetworkInfo();
-  setConnectionStatus('Prêt', 'connected');
+els.connectBtn.addEventListener("click", () => connectTo(els.peerId.value));
+els.peerId.addEventListener("keydown", (e) => { if (e.key === "Enter") connectTo(els.peerId.value); });
+
+els.sendBtn.addEventListener("click", sendChat);
+els.textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); });
+
+els.fileBtn.addEventListener("click", () => els.fileInput.click());
+els.fileInput.addEventListener("change", () => {
+  const file = els.fileInput.files[0];
+  els.fileInput.value = "";
+  if (file) sendFile(file);
 });
 
-socket.on('online-peers', (peers) => {
-  appState.peers.clear();
-  peers.forEach(p => {
-    appState.peers.set(p.peerId, { ...p, mode: evaluateBestMode(p.peerId) });
-  });
-  renderPeerList();
-});
+els.disconnectBtn.addEventListener("click", () => teardown("Hors ligne"));
 
-socket.on('relay-message', ({ from, message }) => {
-  displayMessage(message, 'peer', from.slice(0, 8));
-});
-
-socket.on('message-history', ({ messages }) => {
-  messages.forEach(msg => {
-    const type = msg.from === appState.peerId ? 'own' : 'peer';
-    displayMessage(msg.message, type, msg.from.slice(0, 8));
-  });
-});
-
-function sendMessage() {
-  const targetEl = document.getElementById('target-peer-id');
-  const messageEl = document.getElementById('message-input');
-  const target = targetEl.value.trim();
-  const text = messageEl.value.trim();
-  
-  if (!target || !text) return;
-  
-  displayMessage(text, 'own', appState.name);
-  socket.emit('relay-message', {
-    from: appState.peerId,
-    to: target,
-    message: text,
-    timestamp: Date.now()
-  });
-  
-  appState.messageCount += 1;
-  document.getElementById('message-count').textContent = String(appState.messageCount);
-  messageEl.value = '';
+async function copyText(text, button, doneLabel) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  const original = button.textContent;
+  button.textContent = doneLabel;
+  setTimeout(() => { button.textContent = original; }, 1500);
 }
 
-document.getElementById('message-form').addEventListener('submit', (e) => {
-  e.preventDefault();
-  sendMessage();
+els.copyId.disabled = true;
+els.copyLink.disabled = true;
+
+els.copyId.addEventListener("click", () => copyText(els.myId.value, els.copyId, "Copié ✓"));
+
+els.copyLink.addEventListener("click", () => {
+  const link = window.location.origin + window.location.pathname + "?peer=" + encodeURIComponent(els.myId.value);
+  copyText(link, els.copyLink, "Lien copié ✓");
 });
 
-document.querySelectorAll('[data-mode]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    appState.selectedMode = btn.dataset.mode;
-    updateModeUI();
-    displayMessage(`Mode changé : ${appState.selectedMode.toUpperCase()}`, 'peer', 'Système');
-  });
-});
-
-window.addEventListener('load', () => {
-  updateModeUI();
-  setConnectionStatus('Prêt', 'connected');
-  updateNetworkInfo();
-});
+setStatus("waiting", "Connexion au réseau…");
+initPeer();

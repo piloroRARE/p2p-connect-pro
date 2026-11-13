@@ -1,54 +1,57 @@
 # P2P Connect Pro
 
-Application web Python pour un chat pair-à-pair avec sélection automatique du meilleur mode de transport.
+Application web **pair-à-pair (P2P)** de chat et d'envoi de documents, **sans serveur applicatif**.
+Les deux personnes doivent simplement être connectées à Internet : les messages et les fichiers
+circulent **directement entre les deux navigateurs** via WebRTC, chiffrés de bout en bout (DTLS).
+
+## Fonctionnement
+
+1. Chaque personne ouvre la page : un **identifiant P2P unique** est généré automatiquement.
+2. Elle partage son ID (ou son **lien d'invitation** copiable) par mail, SMS ou messagerie.
+3. Le contact colle l'ID : la connexion WebRTC s'établit (signaling gratuit PeerJS, utilisé
+   **uniquement** pour la mise en relation initiale).
+4. Ensuite, tout est direct : chat en temps réel et transfert de documents par morceaux
+   (découpage en tranches de 64 Ko avec contrôle de la mémoire tampon et barre de progression).
+
+Aucune donnée (message ou fichier) ne transite par un serveur : seul l'échange des adresses
+réseau initiales passe par le signaling PeerJS public.
+
+## Utilisation
+
+L'application est 100 % statique : aucun backend à installer.
+
+### Option 1 — GitHub Pages (recommandé)
+
+Activez GitHub Pages sur la branche principale (`Settings > Pages`), puis ouvrez l'URL du site.
+
+### Option 2 — Serveur statique local
+
+```bash
+python -m http.server 8000
+```
+
+Ouvrez ensuite `http://localhost:8000`.
+
+> ⚠️ Ouvrez la page dans **deux navigateurs/appareils différents** (deux onglets du même
+> navigateur fonctionnent aussi pour tester).
 
 ## Fonctionnalités
 
-- Chat direct WebRTC entre navigateurs
-- Fallback automatique via le serveur en cas de contraintes réseau
-- Mode automatique intelligent : direct si possible, relay si besoin
-- Interface moderne inspirée du mock-up fourni
-- Backend Python avec signalisation Socket.IO
-
-## Prérequis
-
-- Python 3.10+
-- Un navigateur moderne (Chrome, Edge, Firefox)
-
-## Installation
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-## Lancer l'application
-
-```bash
-python app.py
-```
-
-Ouvrez ensuite :
-
-```text
-http://localhost:5000
-```
-
-## Modes de connexion
-
-- Auto : le système choisit le meilleur mode automatiquement
-- Direct : privilégie WebRTC
-- Relay : utilise le serveur comme fallback
-
-La logique d'automatisation repose sur une évaluation des conditions du navigateur et de la qualité réseau pour choisir :
-
-- WebRTC direct si le route est viable
-- relay serveur si le réseau est limité, le trafic ne peut pas être établi ou la connexion directe échoue
+- Chat en temps réel entre deux personnes
+- Envoi de documents de toute taille (découpage automatique, reprise du flux si le réseau ralentit)
+- Barre de progression d'envoi et bouton de téléchargement côté destinataire
+- Lien d'invitation copiable (`?peer=<id>` pour connexion automatique)
+- Statut de connexion en temps réel
+- Interface responsive, en français
 
 ## Structure
 
-- `app.py` : backend Flask + Socket.IO
-- `templates/index.html` : interface utilisateur
+- `index.html` : interface utilisateur
+- `static/js/app.js` : client WebRTC/PeerJS (chat + transfert de fichiers)
 - `static/css/style.css` : styles
-- `static/js/app.js` : client WebRTC + logique auto mode
+
+## Limites connues
+
+- Le signaling PeerJS public sert uniquement à la mise en relation ; si les deux réseaux
+  bloquent totalement le P2P (NAT très restrictif sans TURN), la connexion peut échouer.
+- Une seule conversation à la fois par page.

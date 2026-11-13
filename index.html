@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>P2P Connect Pro — Chat &amp; fichiers sans serveur</title>
+  <link rel="stylesheet" href="static/css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⇄</span>
+      <div>
+        <h1>P2P Connect Pro</h1>
+        <p>Chat &amp; documents de particulier à particulier — aucune donnée ne passe par un serveur</p>
+      </div>
+    </div>
+    <div id="status" class="status offline"><span class="dot"></span><span id="status-text">Hors ligne</span></div>
+  </header>
+
+  <main>
+    <section id="connect-panel" class="card">
+      <h2>Connexion</h2>
+
+      <div class="field">
+        <label>Votre identifiant P2P</label>
+        <div class="row">
+          <input id="my-id" type="text" readonly placeholder="Génération en cours…">
+          <button id="copy-id" class="btn ghost" title="Copier mon identifiant">Copier l'ID</button>
+          <button id="copy-link" class="btn ghost" title="Copier un lien d'invitation">Copier le lien</button>
+        </div>
+        <p class="hint">Envoyez votre ID (ou le lien) à votre contact par mail, SMS ou messagerie.</p>
+      </div>
+
+      <div class="field">
+        <label>Identifiant de votre contact</label>
+        <div class="row">
+          <input id="peer-id" type="text" placeholder="Collez l'ID reçu ici" autocomplete="off">
+          <button id="connect-btn" class="btn primary">Se connecter</button>
+        </div>
+        <p class="hint" id="connect-error"></p>
+      </div>
+
+      <div class="steps">
+        <div class="step"><span>1</span> Copiez votre ID ou votre lien d'invitation</div>
+        <div class="step"><span>2</span> Votre contact colle l'ID chez lui (et vous le sien)</div>
+        <div class="step"><span>3</span> Discutez et échangez des fichiers en direct</div>
+      </div>
+    </section>
+
+    <section id="chat-panel" class="card chat" hidden>
+      <div class="chat-head">
+        <div>
+          <h2>Conversation</h2>
+          <p id="peer-label">Connecté à : —</p>
+        </div>
+        <button id="disconnect-btn" class="btn ghost danger">Déconnecter</button>
+      </div>
+
+      <div id="messages" class="messages"></div>
+
+      <div class="composer">
+        <button id="file-btn" class="btn ghost" title="Envoyer un document">📎 Fichier</button>
+        <input id="file-input" type="file" hidden>
+        <input id="text-input" type="text" placeholder="Écrivez un message…" autocomplete="off">
+        <button id="send-btn" class="btn primary">Envoyer</button>
+      </div>
+      <div id="send-progress" class="send-progress" hidden>
+        <span id="send-progress-label"></span>
+        <div class="bar"><div id="send-progress-bar"></div></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>WebRTC + PeerJS : le signaling gratuit sert uniquement à la mise en relation initiale ;
+    ensuite les messages et fichiers circulent directement entre les deux navigateurs, chiffrés de bout en bout (DTLS).</p>
+  </footer>
+
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="static/js/app.js"></script>
+</body>
+</html>
