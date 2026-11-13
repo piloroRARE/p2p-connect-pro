@@ -10,6 +10,10 @@ const IV_LENGTH = 12;
 const KIND_CONTROL = 1;
 const KIND_CHUNK = 2;
 
+const MAX_PENDING_CIPHER = 300;
+const MAX_INCOMING_FILE = 1024 * 1024 * 1024;
+const MAX_CONCURRENT_INCOMING = 5;
+
 const CALL_PROFILES = {
   excellent: { videoBitrate: 2500000, audioBitrate: 64000, width: 1280, height: 720, videoEnabled: true, label: "excellent" },
   good: { videoBitrate: 1200000, audioBitrate: 56000, width: 960, height: 540, videoEnabled: true, label: "bon" },
@@ -352,6 +356,7 @@ async function handleData(data) {
   if (buf === null) return;
 
   if (!cryptoKey) {
+    if (pendingCipher.length >= MAX_PENDING_CIPHER) pendingCipher.shift();
     pendingCipher.push(buf);
     showKeyBanner();
     return;
@@ -386,8 +391,17 @@ function routeParsed(parsed) {
       break;
 
     case "file-meta": {
-      incomingFiles.set(msg.id, { name: msg.name, size: msg.size, mime: msg.mime, chunks: [], received: 0 });
-      addFileMessage(msg.id, msg.name, msg.size, false);
+      const tooBig = typeof msg.size !== "number" || msg.size <= 0 || msg.size > MAX_INCOMING_FILE;
+      const tooMany = incomingFiles.size >= MAX_CONCURRENT_INCOMING;
+      if (tooBig || tooMany) {
+        sendEncrypted({ type: "file-abort", id: msg.id });
+        addSystem(tooBig
+          ? "⚠️ Fichier refusé : taille invalide ou supérieure à 1 Go."
+          : "⚠️ Fichier refusé : trop de transferts simultanés.");
+        break;
+      }
+      incomingFiles.set(msg.id, { name: String(msg.name), size: msg.size, mime: String(msg.mime || ""), chunks: [], received: 0 });
+      addFileMessage(msg.id, String(msg.name), msg.size, false);
       break;
     }
 
@@ -446,8 +460,12 @@ async function measureDataChannelRtt() {
     const sent = await sendEncrypted({ type: "net-ping", t });
     if (!sent) return null;
     const rtt = await new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(null), 2000);
-      netPongWaiters.push({ t, resolve: (v) => { clearTimeout(timeout); resolve(v); } });
+      const waiter = { t, resolve: (v) => { clearTimeout(timeout); resolve(v); } };
+      const timeout = setTimeout(() => {
+        netPongWaiters = netPongWaiters.filter((w) => w !== waiter);
+        resolve(null);
+      }, 2000);
+      netPongWaiters.push(waiter);
     });
     if (rtt == null) return null;
     samples.push(rtt);
@@ -459,6 +477,14 @@ async function measureDataChannelRtt() {
 function handleChunk(fileId, bytes) {
   const entry = incomingFiles.get(fileId);
   if (!entry) return;
+  if (entry.received + bytes.byteLength > MAX_INCOMING_FILE) {
+    const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
+    if (node) node.remove();
+    incomingFiles.delete(fileId);
+    sendEncrypted({ type: "file-abort", id: fileId });
+    addSystem("⚠️ Transfert interrompu : taille maximale de 1 Go dépassée.");
+    return;
+  }
   entry.chunks.push(bytes);
   entry.received += bytes.byteLength;
   setFileProgress(fileId, entry.size ? entry.received / entry.size : 0);

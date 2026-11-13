@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>P2P Connect Pro — Chat &amp; fichiers sans serveur</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self'; connect-src 'self' wss:; img-src 'self' blob:; media-src blob:; object-src 'none'; base-uri 'self'; form-action 'none'">
   <link rel="stylesheet" href="static/css/style.css">
 </head>
 <body>
@@ -121,7 +122,7 @@
 doublement : DTLS (transport) + AES-256-GCM de bout en bout avec votre phrase secrète.</p>
   </footer>
 
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js" integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR" crossorigin="anonymous"></script>
   <script src="static/js/app.js"></script>
 </body>
 </html>

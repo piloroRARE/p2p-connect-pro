@@ -70,6 +70,29 @@ Ouvrez ensuite `http://localhost:8000`.
 - `static/js/app.js` : client WebRTC/PeerJS (chat + transfert de fichiers)
 - `static/css/style.css` : styles
 
+## Sécurité
+
+- **Chiffrement** : DTLS (transport WebRTC) + AES-256-GCM de bout en bout pour les messages et
+  fichiers ; clé dérivée par PBKDF2-SHA256 (250 000 itérations), non extractible
+  (`extractable = false`), jamais transmise ; IV aléatoire unique pour chaque message et chaque
+  morceau de fichier.
+- **XSS** : aucun contenu distant n'est inséré en HTML — tous les textes (messages, noms de
+  fichiers, erreurs) sont affichés via `textContent`.
+- **Content Security Policy** stricte : scripts limités au domaine et au CDN PeerJS, pas de
+  `object-src`, pas de formulaires ; le script PeerJS est chargé avec un hash **SRI** (toute
+  altération du CDN empêche le chargement).
+- **Limitation des ressources** (protection contre la saturation mémoire) : file d'attente des
+  messages chiffrés non déchiffrables bornée à 300, maximum 5 fichiers reçus simultanément,
+  taille maximale de 1 Go par fichier reçu.
+- **Appels** : jamais acceptés automatiquement — acceptation explicite obligatoire ; refus
+  automatique si un appel est déjà en cours.
+- **Bonne pratique** : partagez votre ID uniquement avec les personnes concernées et convenez de
+  la phrase secrète par un autre canal (appel, SMS). Une personne qui connaît l'ID seul peut
+  tenter de se connecter, mais ne peut rien lire ni envoyer d'utile sans la phrase secrète.
+- **Limites** : le signaling PeerJS public connaît votre identifiant et vos adresses IP publiques
+  (nécessaire à la mise en relation, mais ne voit jamais le contenu) ; le sel PBKDF2 est fixe
+  (un sel par conversation serait préférable) ; les fichiers reçus sont assemblés en mémoire.
+
 ## Limites connues
 
 - Le signaling PeerJS public sert uniquement à la mise en relation ; si les deux réseaux
