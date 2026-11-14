@@ -3,7 +3,9 @@ from flask_socketio import SocketIO, emit
 from datetime import datetime
 from pathlib import Path
 import json
+import math
 import os
+import re
 import uuid
 
 app = Flask(__name__)
@@ -14,6 +16,53 @@ clients = {}
 peer_to_sid = {}
 peer_metadata = {}
 MESSAGES_FILE = Path(__file__).with_name("messages_history.json")
+MAX_MESSAGE_LENGTH = 500
+MAX_NAME_LENGTH = 50
+PEER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+
+
+def sanitize_peer_id(value):
+    if not isinstance(value, str):
+        return None
+    peer_id = value.strip()
+    if not peer_id or not PEER_ID_RE.fullmatch(peer_id):
+        return None
+    return peer_id
+
+
+def sanitize_name(value):
+    if value is None:
+        return "Utilisateur"
+    name = str(value).strip()
+    if not name:
+        return "Utilisateur"
+    name = re.sub(r"\s+", " ", name)
+    return name[:MAX_NAME_LENGTH]
+
+
+def sanitize_message(value):
+    if value is None:
+        return None
+    message = str(value).strip()
+    if not message:
+        return None
+    return message[:MAX_MESSAGE_LENGTH]
+
+
+def build_online_peers(exclude_peer_id=None):
+    peers = []
+    for pid, info in clients.items():
+        if exclude_peer_id and pid == exclude_peer_id:
+            continue
+        peers.append(
+            {
+                "peerId": pid,
+                "name": info.get("name", "Utilisateur"),
+                "networkScore": calculate_network_score(peer_metadata.get(pid, {})),
+                "connectionType": info.get("network_info", {}).get("type", "unknown"),
+            }
+        )
+    return peers
 
 
 def load_messages():
@@ -37,12 +86,22 @@ def save_message(message_data):
         print(f"Erreur sauvegarde messages: {exc}")
 
 
+def to_float(value, default=0.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    if not math.isfinite(number):
+        return float(default)
+    return number
+
+
 def calculate_network_score(client_data):
     if not isinstance(client_data, dict):
         return 50
 
     score = 100
-    connection_type = client_data.get("connectionType", "unknown")
+    connection_type = str(client_data.get("connectionType", "unknown")).lower()
 
     if connection_type == "4g":
         score -= 0
@@ -55,11 +114,11 @@ def calculate_network_score(client_data):
     else:
         score -= 6
 
-    latency = float(client_data.get("latency", 50) or 50)
+    latency = max(0.0, to_float(client_data.get("latency", 50), 50.0))
     if latency > 80:
         score -= min(18, (latency - 80) / 5)
 
-    packet_loss = float(client_data.get("packetLoss", 0) or 0)
+    packet_loss = max(0.0, to_float(client_data.get("packetLoss", 0), 0.0))
     if packet_loss > 0:
         score -= min(25, packet_loss * 4)
 
@@ -72,8 +131,6 @@ def get_best_mode(peer1_data, peer2_data):
     average = (score1 + score2) / 2
     minimum = min(score1, score2)
 
-    if average >= 70:
-        return "direct", minimum
     if average >= 50:
         return "direct", minimum
     return "relay", minimum
@@ -86,7 +143,8 @@ def index():
 
 @app.route("/api/messages")
 def api_messages():
-    return jsonify({"messages": load_messages()[-50:], "count": len(load_messages())})
+    messages = load_messages()
+    return jsonify({"messages": messages[-50:], "count": len(messages)})
 
 
 @socketio.on("connect")
@@ -103,15 +161,20 @@ def handle_connect():
 
 @socketio.on("register")
 def handle_register(payload):
-    if not payload:
+    if not isinstance(payload, dict):
         return emit("error", {"message": "Payload invalide"})
 
-    peer_id = payload.get("peerId")
-    name = payload.get("name") or "Utilisateur"
-    network_info = payload.get("networkInfo") or {}
+    peer_id = sanitize_peer_id(payload.get("peerId"))
+    name = sanitize_name(payload.get("name"))
+    network_info = payload.get("networkInfo") if isinstance(payload.get("networkInfo"), dict) else {}
 
     if not peer_id:
         return emit("error", {"message": "peerId requis"})
+
+    if peer_id in clients and clients[peer_id].get("sid") != request.sid:
+        previous_sid = clients[peer_id].get("sid")
+        if previous_sid:
+            emit("peer-disconnected", {"peerId": peer_id}, room=previous_sid)
 
     clients[peer_id] = {
         "name": name,
@@ -122,22 +185,11 @@ def handle_register(payload):
 
     peer_to_sid[peer_id] = request.sid
     peer_metadata[peer_id] = {
-        "connectionType": network_info.get("type", "unknown"),
-        "latency": network_info.get("latency", 60),
-        "packetLoss": network_info.get("packetLoss", 0),
+        "connectionType": str(network_info.get("type", "unknown")).lower(),
+        "latency": to_float(network_info.get("latency", 60), 60.0),
+        "packetLoss": to_float(network_info.get("packetLoss", 0), 0.0),
         "lastUpdate": datetime.now().isoformat(),
     }
-
-    online_peers = [
-        {
-            "peerId": pid,
-            "name": info["name"],
-            "networkScore": calculate_network_score(peer_metadata.get(pid, {})),
-            "connectionType": info.get("network_info", {}).get("type", "unknown"),
-        }
-        for pid, info in clients.items()
-        if pid != peer_id
-    ]
 
     emit(
         "peer-registered",
@@ -147,50 +199,41 @@ def handle_register(payload):
             "networkScore": calculate_network_score(peer_metadata.get(peer_id, {})),
         },
     )
-    emit("online-peers", online_peers, broadcast=True)
+    emit("online-peers", build_online_peers(), broadcast=True)
     emit("message-history", {"messages": load_messages()[-50:]})
 
 
 @socketio.on("update-network-info")
 def handle_network_update(payload):
-    if not payload:
+    if not isinstance(payload, dict):
         return
 
-    peer_id = payload.get("peerId")
-    network_info = payload.get("networkInfo") or {}
+    peer_id = sanitize_peer_id(payload.get("peerId"))
+    network_info = payload.get("networkInfo") if isinstance(payload.get("networkInfo"), dict) else {}
 
     if not peer_id:
         return
 
     peer_metadata[peer_id] = {
-        "connectionType": network_info.get("type", "unknown"),
-        "latency": network_info.get("latency", 60),
-        "packetLoss": network_info.get("packetLoss", 0),
+        "connectionType": str(network_info.get("type", "unknown")).lower(),
+        "latency": to_float(network_info.get("latency", 60), 60.0),
+        "packetLoss": to_float(network_info.get("packetLoss", 0), 0.0),
         "lastUpdate": datetime.now().isoformat(),
     }
 
     if peer_id in clients:
         clients[peer_id]["network_info"] = network_info
 
-    online_peers = [
-        {
-            "peerId": pid,
-            "name": info["name"],
-            "networkScore": calculate_network_score(peer_metadata.get(pid, {})),
-            "connectionType": info.get("network_info", {}).get("type", "unknown"),
-        }
-        for pid, info in clients.items()
-    ]
-    emit("online-peers", online_peers, broadcast=True)
+    emit("online-peers", build_online_peers(), broadcast=True)
 
 
 @socketio.on("signal")
 def handle_signal(payload):
-    if not payload:
+    if not isinstance(payload, dict):
         return
 
-    target_peer = payload.get("target")
-    source_peer = payload.get("from")
+    target_peer = sanitize_peer_id(payload.get("target"))
+    source_peer = sanitize_peer_id(payload.get("from"))
     signal_data = payload.get("signal")
 
     if not target_peer or not signal_data:
@@ -200,7 +243,7 @@ def handle_signal(payload):
     if not target_sid:
         return emit("error", {"message": f"Le pair {target_peer} n'est pas connecté"})
 
-    source_data = peer_metadata.get(source_peer, {})
+    source_data = peer_metadata.get(source_peer, {}) if source_peer else {}
     target_data = peer_metadata.get(target_peer, {})
     recommended_mode, confidence = get_best_mode(source_data, target_data)
 
@@ -220,14 +263,14 @@ def handle_signal(payload):
 
 @socketio.on("relay-message")
 def handle_relay_message(payload):
-    if not payload:
+    if not isinstance(payload, dict):
         return
 
-    target_peer = payload.get("to")
-    from_peer = payload.get("from")
-    message_text = payload.get("message")
+    target_peer = sanitize_peer_id(payload.get("to"))
+    from_peer = sanitize_peer_id(payload.get("from"))
+    message_text = sanitize_message(payload.get("message"))
 
-    if not target_peer or not message_text:
+    if not target_peer or not from_peer or not message_text:
         return emit("error", {"message": "Message relais invalide"})
 
     target_sid = peer_to_sid.get(target_peer)
@@ -258,14 +301,14 @@ def handle_relay_message(payload):
 
 @socketio.on("direct-message-sent")
 def handle_direct_message(payload):
-    if not payload:
+    if not isinstance(payload, dict):
         return
 
-    from_peer = payload.get("from")
-    to_peer = payload.get("to")
-    message_text = payload.get("message")
+    from_peer = sanitize_peer_id(payload.get("from"))
+    to_peer = sanitize_peer_id(payload.get("to"))
+    message_text = sanitize_message(payload.get("message"))
 
-    if not from_peer or not to_peer:
+    if not from_peer or not to_peer or not message_text:
         return
 
     message_record = {
@@ -279,25 +322,25 @@ def handle_direct_message(payload):
     save_message(message_record)
 
 
+@socketio.on("request-online-peers")
+def handle_request_online_peers():
+    emit("online-peers", build_online_peers())
+
+
 @socketio.on("disconnect")
 def handle_disconnect():
-    for peer_id, data in list(clients.items()):
+    peer_id = None
+    for pid, data in list(clients.items()):
         if data.get("sid") == request.sid:
-            del clients[peer_id]
-            peer_to_sid.pop(peer_id, None)
-            peer_metadata.pop(peer_id, None)
+            peer_id = pid
+            del clients[pid]
+            peer_to_sid.pop(pid, None)
+            peer_metadata.pop(pid, None)
             break
 
-    online_peers = [
-        {
-            "peerId": pid,
-            "name": info["name"],
-            "networkScore": calculate_network_score(peer_metadata.get(pid, {})),
-            "connectionType": info.get("network_info", {}).get("type", "unknown"),
-        }
-        for pid, info in clients.items()
-    ]
-    emit("online-peers", online_peers, broadcast=True)
+    if peer_id:
+        emit("peer-disconnected", {"peerId": peer_id}, broadcast=True)
+        emit("online-peers", build_online_peers(), broadcast=True)
 
 
 if __name__ == "__main__":
