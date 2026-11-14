@@ -266,13 +266,22 @@ function addFileMessage(fileId, name, size, mine) {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
+function findFileNode(fileId) {
+  return els.messages.querySelector('[data-file-id="' + CSS.escape(fileId) + '"]');
+}
+
+function removeFileMessage(fileId) {
+  const node = findFileNode(fileId);
+  if (node) node.remove();
+}
+
 function setFileProgress(fileId, ratio) {
-  const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
+  const node = findFileNode(fileId);
   if (node) node.querySelector(".bar > div").style.width = Math.round(ratio * 100) + "%";
 }
 
 function finishFileMessage(fileId, blob, name, mine) {
-  const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
+  const node = findFileNode(fileId);
   if (!node) return;
   const bar = node.querySelector(".bar");
   if (bar) bar.remove();
@@ -415,8 +424,7 @@ function routeParsed(parsed) {
     }
 
     case "file-abort": {
-      const node = els.messages.querySelector('[data-file-id="' + msg.id + '"]');
-      if (node) node.remove();
+      removeFileMessage(msg.id);
       incomingFiles.delete(msg.id);
       break;
     }
@@ -478,8 +486,7 @@ function handleChunk(fileId, bytes) {
   const entry = incomingFiles.get(fileId);
   if (!entry) return;
   if (entry.received + bytes.byteLength > MAX_INCOMING_FILE) {
-    const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
-    if (node) node.remove();
+    removeFileMessage(fileId);
     incomingFiles.delete(fileId);
     sendEncrypted({ type: "file-abort", id: fileId });
     addSystem("⚠️ Transfert interrompu : taille maximale de 1 Go dépassée.");
@@ -538,8 +545,7 @@ async function sendFile(file) {
     setTimeout(() => { els.sendProgress.hidden = true; }, 1500);
   } catch (err) {
     await sendEncrypted({ type: "file-abort", id: fileId });
-    const node = els.messages.querySelector('[data-file-id="' + fileId + '"]');
-    if (node) node.remove();
+    removeFileMessage(fileId);
     addSystem("Échec de l'envoi du fichier : " + err.message);
   } finally {
     resetProgress();
